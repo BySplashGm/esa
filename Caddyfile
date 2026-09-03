@@ -43,8 +43,26 @@ handle / {
 }
 
 mercure {
-  publisher_jwt key
-  subscriber_jwt key
-  anonymous true
-  ui true
+  anonymous
+
+  # Mercure 1.0 modern mode: access tokens are RFC 9068 JWTs bound to an issuer
+  # and to this hub's resource identifier. An identifier ending in
+  # /.well-known/mercure doubles as the base URL relative topics resolve
+  # against, which is what our rel="self" link values are.
+  resource_identifier https://localhost/.well-known/mercure
+  issuer https://localhost {
+    publisher {
+      jwt key HS256
+    }
+    subscriber {
+      jwt key HS256
+    }
+  }
+
+  # INSECURE: dev only. Serves the hub's debugger UI at
+  # /.well-known/mercure/debug/. This is the 1.0 name of the former "ui"
+  # directive. Not "playground": that one also forces cors_origins and
+  # publish_origins to "*" and drops the cookie name prefix, none of which this
+  # same-origin test server needs.
+  debugger
 }
