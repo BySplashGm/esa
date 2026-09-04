@@ -3,6 +3,16 @@ mercure:
         default:
             url: '%env(MERCURE_URL)%'
             public_url: '%env(MERCURE_PUBLIC_URL)%'
+            # Mint RFC 9068 access tokens instead of the 0.x "mercure" claim.
+            protocol_version: '1.0'
             jwt:
                 secret: '%env(MERCURE_JWT_SECRET)%'
-                publish: '*'
+                publish: ['*']
+                # RFC 9068 requires all three, and the bundle refuses to compile
+                # under protocol_version 1.0 without them. "aud" is left alone: it
+                # defaults to public_url, which is what the hub pins as its
+                # resource_identifier.
+                claims:
+                    iss: '%env(MERCURE_JWT_ISSUER)%'
+                    sub: 'esa-api'
+                    client_id: 'esa-api'

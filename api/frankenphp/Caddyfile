@@ -46,12 +46,31 @@
 	}
 
 	mercure {
-		# Transport to use (default to Bolt)
-		transport_url {$MERCURE_TRANSPORT_URL:bolt:///data/mercure.db}
-		# Publisher JWT key
-		publisher_jwt {env.MERCURE_PUBLISHER_JWT_KEY} {env.MERCURE_PUBLISHER_JWT_ALG}
-		# Subscriber JWT key
-		subscriber_jwt {env.MERCURE_SUBSCRIBER_JWT_KEY} {env.MERCURE_SUBSCRIBER_JWT_ALG}
+		# Transport to use (default to Bolt). 1.0 replaced the transport_url
+		# connection string with a transport module block.
+		transport bolt {
+			path {$MERCURE_TRANSPORT_PATH:/data/mercure.db}
+		}
+		# The OAuth 2.0 resource identifier, i.e. the "aud" this hub accepts.
+		# Ending it in /.well-known/mercure also makes it the base URL that
+		# relative topics and URL Patterns resolve against. Left unset it is
+		# derived per request, which is not what we want behind a proxy.
+		resource_identifier {$MERCURE_RESOURCE_IDENTIFIER:https://localhost/.well-known/mercure}
+		# Access tokens are RFC 9068 JWTs bound to a trusted issuer, matched on
+		# their "iss" claim. The flat publisher_jwt / subscriber_jwt directives
+		# still parse but now select compatibility mode, which relaxes token
+		# validation — this issuer block is the modern form. The value must be
+		# the "iss" the Symfony bundle mints; both read MERCURE_JWT_ISSUER.
+		issuer {$MERCURE_JWT_ISSUER:https://localhost} {
+			# Publisher JWT key
+			publisher {
+				jwt {env.MERCURE_PUBLISHER_JWT_KEY} {env.MERCURE_PUBLISHER_JWT_ALG}
+			}
+			# Subscriber JWT key
+			subscriber {
+				jwt {env.MERCURE_SUBSCRIBER_JWT_KEY} {env.MERCURE_SUBSCRIBER_JWT_ALG}
+			}
+		}
 		# Allow anonymous subscribers (double-check that it's what you want)
 		anonymous
 		# Enable the subscription API (double-check that it's what you want)

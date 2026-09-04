@@ -7,6 +7,36 @@
 FROM dunglas/frankenphp:1-php8.3 AS frankenphp_upstream
 
 
+# Custom FrankenPHP binary
+#
+# The stock image embeds Mercure 0.24.2, which speaks 0.x only and rejects a 1.0
+# configuration outright, so the binary is rebuilt against the 1.0 module. Two
+# things make this cheap rather than a fork: the builder image ships Go 1.26.7,
+# the floor mercure/caddy@v1.0.0-alpha.3 declares, and FrankenPHP already pins
+# Caddy 2.11.4, the version that module wants.
+#
+# Everything except the two pinned versions is the recipe documented at
+# https://frankenphp.dev/docs/docker/ — the "=./" replacements point xcaddy at
+# the FrankenPHP sources the builder image carries, and mercure/caddy and
+# vulcain/caddy are already in that list.
+FROM dunglas/frankenphp:1-builder-php8.3 AS frankenphp_builder
+
+COPY --from=caddy:2.11.4-builder /usr/bin/xcaddy /usr/bin/xcaddy
+
+RUN CGO_ENABLED=1 \
+	XCADDY_SETCAP=1 \
+	XCADDY_GO_BUILD_FLAGS="-ldflags='-w -s' -tags=nobadger,nomysql,nopgx" \
+	CGO_CFLAGS=$(php-config --includes) \
+	CGO_LDFLAGS="$(php-config --ldflags) $(php-config --libs)" \
+	xcaddy build \
+		--output /usr/local/bin/frankenphp \
+		--with github.com/dunglas/frankenphp=./ \
+		--with github.com/dunglas/frankenphp/caddy=./caddy/ \
+		--with github.com/dunglas/caddy-cbrotli \
+		--with github.com/dunglas/mercure/caddy@v1.0.0-alpha.3 \
+		--with github.com/dunglas/vulcain/caddy@v1.4.3
+
+
 # The different stages of this Dockerfile are meant to be built into separate images
 # https://docs.docker.com/develop/develop-images/multistage-build/#stop-at-a-specific-build-stage
 # https://docs.docker.com/compose/compose-file/#target
@@ -39,6 +69,8 @@ RUN set -eux; \
 		zip \
     pdo_sqlite \
 	;
+
+COPY --from=frankenphp_builder /usr/local/bin/frankenphp /usr/local/bin/frankenphp
 
 COPY --link frankenphp/conf.d/app.ini $PHP_INI_DIR/conf.d/
 COPY --link --chmod=755 frankenphp/docker-entrypoint.sh /usr/local/bin/docker-entrypoint
