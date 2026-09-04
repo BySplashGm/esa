@@ -25,7 +25,6 @@ type Options<T> = {
 } & RequestInit;
 
 type Subscription = {
-  mercureUrl: string;
   type: MatcherType;
   // The topics this matcher currently stands for. An exact matcher holds one;
   // a URL Pattern holds every fetched resource it covers, so the subscription
@@ -33,20 +32,39 @@ type Subscription = {
   topics: Set<string>;
 }
 
-let lastEventId: string
-const eventSources = new Map();
-// Matcher (an exact topic, or a URL Pattern) -> the subscription it opens.
-const subscriptions = new Map<string, Subscription>();
-// Topic -> the matcher covering it.
-const matchers = new Map<string, string>();
+// Everything about one hub. Kept per hub rather than in module-wide maps: two
+// hubs can legitimately serve the same topic path, and a resume cursor is only
+// meaningful to the hub that issued it.
+type Hub = {
+  // Matcher (an exact topic, or a URL Pattern) -> the subscription it opens.
+  subscriptions: Map<string, Subscription>;
+  lastEventId?: string;
+  eventSource?: any;
+  options?: Options<any>;
+}
+
+const hubs = new Map<string, Hub>()
+// Topic -> the hub serving it and the matcher covering it. Global because
+// close() is given a topic and nothing else.
+const registrations = new Map<string, {mercureUrl: string, matcher: string}>()
+
+function hub(mercureUrl: string): Hub {
+  let entry = hubs.get(mercureUrl)
+  if (entry === undefined) {
+    entry = {subscriptions: new Map<string, Subscription>()}
+    hubs.set(mercureUrl, entry)
+  }
+
+  return entry
+}
 
 // Attach the callbacks to a connection. Split out of listen() so a new
 // subscriber joining an existing matcher can refresh them without dropping
 // the stream and reconnecting.
-function bind<T>(entry: {eventSource: any, options: Options<T>}, options: Options<T>) {
+function bind<T>(entry: Hub, options: Options<T>) {
   entry.options = options
   entry.eventSource.onmessage = (event: MessageEvent) => {
-    lastEventId = event.lastEventId
+    entry.lastEventId = event.lastEventId
     if (options.onUpdate) {
       try {
         options.onUpdate(options.rawEvent ? event : JSON.parse(event.data))
@@ -60,69 +78,77 @@ function bind<T>(entry: {eventSource: any, options: Options<T>}, options: Option
 }
 
 function listen<T>(mercureUrl: string, options: Options<T> = {}) {
-  const current = eventSources.get(mercureUrl)
-  if (current) {
-    current.eventSource.close()
-    eventSources.delete(mercureUrl)
+  const entry = hub(mercureUrl)
+  if (entry.eventSource) {
+    entry.eventSource.close()
+    entry.eventSource = undefined
   }
 
-  const url = new URL(mercureUrl)
-  let subscribed = 0
-  subscriptions.forEach((subscription, matcher) => {
-    if (subscription.mercureUrl !== mercureUrl) {
-      return
-    }
-
-    url.searchParams.append(matcherParam[subscription.type], matcher)
-    subscribed++
-  })
-
-  if (subscribed === 0) {
+  if (entry.subscriptions.size === 0) {
     return;
   }
 
-  const headers: {[key: string]: string} = options.headers || {}
-  if (lastEventId) {
+  const url = new URL(mercureUrl)
+  entry.subscriptions.forEach((subscription, matcher) => {
+    url.searchParams.append(matcherParam[subscription.type], matcher)
+  })
+
+  // A copy: these headers also belong to the caller's fetch options, and
+  // writing the cursor into them would leak it into every later request.
+  const headers: {[key: string]: string} = {...options.headers}
+  if (entry.lastEventId) {
     // Every call here opens a fresh connection, so the cursor has to travel
     // with the request. A native EventSource cannot set headers, hence the
     // query parameter: the hub takes the union of the query and body
     // components, and last_event_id is single-valued. The header is sent too,
     // for EventSource implementations that support it and for the automatic
     // reconnections they perform on their own.
-    url.searchParams.append('last_event_id', lastEventId)
+    url.searchParams.append('last_event_id', entry.lastEventId)
     // The request header keeps its name in 1.0; only the hub's response header
     // was renamed to Mercure-Last-Event-ID.
-    headers['Last-Event-Id'] = lastEventId
+    headers['Last-Event-Id'] = entry.lastEventId
   }
 
-  const eventSource = new (options.EventSource ?? EventSource)(url.toString(), { withCredentials: options.withCredentials !== undefined ? options.withCredentials : true, headers});
-  const entry = {options, eventSource}
+  entry.eventSource = new (options.EventSource ?? EventSource)(url.toString(), { withCredentials: options.withCredentials !== undefined ? options.withCredentials : true, headers});
   bind(entry, options)
-  eventSources.set(mercureUrl, entry)
 }
 
-export function close(topic: string) {
-  const matcher = matchers.get(topic)
-  if (matcher === undefined) {
-    return
+// Drop a topic from the matcher covering it, without touching any connection.
+// Returns the hub whose subscription set changed, so the caller decides when to
+// reconnect — moving a topic between matchers changes it twice.
+function release(topic: string): string | undefined {
+  const registration = registrations.get(topic)
+  if (registration === undefined) {
+    return undefined
   }
 
-  matchers.delete(topic)
+  registrations.delete(topic)
 
-  const subscription = subscriptions.get(matcher)
-  if (!subscription) {
-    return
+  const entry = hubs.get(registration.mercureUrl)
+  const subscription = entry?.subscriptions.get(registration.matcher)
+  if (!entry || !subscription) {
+    return undefined
   }
 
   subscription.topics.delete(topic)
   // A URL Pattern covers a family: keep the subscription as long as one of its
   // topics is still in use.
   if (subscription.topics.size > 0) {
+    return undefined
+  }
+
+  entry.subscriptions.delete(registration.matcher)
+
+  return registration.mercureUrl
+}
+
+export function close(topic: string) {
+  const mercureUrl = release(topic)
+  if (mercureUrl === undefined) {
     return
   }
 
-  subscriptions.delete(matcher)
-  listen(subscription.mercureUrl, eventSources.get(subscription.mercureUrl)?.options)
+  listen(mercureUrl, hubs.get(mercureUrl)?.options)
 }
 
 export default async function mercure<T>(url: string, opts: Options<T>) {
@@ -151,31 +177,36 @@ export default async function mercure<T>(url: string, opts: Options<T>) {
 
       topic = topic === undefined ? url : topic
       const matcher = opts.matchUrlPattern ?? topic
+      const entry = hub(mercureUrl)
 
-      // Moving a topic from one matcher to another: release the old one first,
-      // otherwise it keeps a topic nothing will ever close.
-      const previous = matchers.get(topic)
-      if (previous !== undefined && previous !== matcher) {
-        close(topic)
+      // Moving a topic from one matcher to another: drop the old registration
+      // first, otherwise it keeps a topic nothing will ever close. Released
+      // rather than closed, so this hub reconnects once below instead of twice.
+      const previous = registrations.get(topic)
+      if (previous !== undefined && (previous.matcher !== matcher || previous.mercureUrl !== mercureUrl)) {
+        const released = release(topic)
+        // A topic that moved to another hub leaves that one holding a
+        // subscription it no longer serves.
+        if (released !== undefined && released !== mercureUrl) {
+          listen(released, hubs.get(released)?.options)
+        }
       }
 
-      let subscription = subscriptions.get(matcher)
+      let subscription = entry.subscriptions.get(matcher)
       const opened = subscription === undefined
 
       if (subscription === undefined) {
         subscription = {
-          mercureUrl,
           type: opts.matchUrlPattern === undefined ? 'exact' : 'urlpattern',
           topics: new Set<string>(),
         }
-        subscriptions.set(matcher, subscription)
+        entry.subscriptions.set(matcher, subscription)
       }
 
       subscription.topics.add(topic)
-      matchers.set(topic, matcher)
+      registrations.set(topic, {mercureUrl, matcher})
 
-      const entry = eventSources.get(mercureUrl)
-      if (opened || !entry) {
+      if (opened || !entry.eventSource) {
         listen(mercureUrl, opts)
 
         return res

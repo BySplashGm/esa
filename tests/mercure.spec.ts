@@ -32,6 +32,8 @@ test('mercure', async ({ page }) => {
   await expect(page.getByTestId('result')).toHaveText('viewing /authors/1: Soyuka');
   page.getByTestId('author-2').click({force: true});
   await expect(page.getByTestId('result')).toHaveText('viewing /authors/2: O\'Donnell, Peter');
+  // Author 1 is still in the tanstack cache, so both topics share one connection.
+  expect(subscribedToBoth).toBe(true);
   await page.waitForTimeout(600); // we set gcTime to 500, tanstack query will clear author 1 from cache, therefore we check that mercure gets updated
   expect(unsubscribedAuthor1).toBe(true);
 });

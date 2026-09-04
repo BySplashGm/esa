@@ -88,7 +88,7 @@ When several resources share a matcher, the callbacks passed to the most recent 
 
 ### Resuming after a disconnection
 
-The id of the last update received is kept and sent back when a subscription is rebuilt, as both the `last_event_id` query parameter and the `Last-Event-Id` request header. The query parameter is what makes this work with a native `EventSource`, which cannot set headers.
+The id of the last update received is kept per hub and sent back when a subscription is rebuilt, as both the `last_event_id` query parameter and the `Last-Event-Id` request header. The query parameter is what makes this work with a native `EventSource`, which cannot set headers.
 
 ### Examples
 
