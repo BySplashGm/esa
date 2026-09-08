@@ -54,6 +54,10 @@ Available options:
 
 This can be used in conjunction with [@api-platform/ld](/linked-data) as the `fetchFn`.
 
+### Resuming after a disconnection
+
+The id of the last update received is kept and sent back when a subscription is rebuilt, as both the `last_event_id` query parameter and the `Last-Event-Id` request header. The query parameter is what makes this work with a native `EventSource`, which cannot set headers.
+
 ### Examples
 
 See [our Tanstack query example](https://github.com/api-platform/esa/blob/main/tests-server/mercure.html) or the source code of our [home page](https://github.com/api-platform/esa/blob/main/api/public/index.js).

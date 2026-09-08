@@ -31,6 +31,15 @@ function listen<T>(mercureUrl: string, options: Options<T> = {}) {
 
   const headers: {[key: string]: string} = options.headers || {}
   if (lastEventId) {
+    // Every call here opens a fresh connection, so the cursor has to travel
+    // with the request. A native EventSource cannot set headers, hence the
+    // query parameter: the hub takes the union of the query and body
+    // components, and last_event_id is single-valued. The header is sent too,
+    // for EventSource implementations that support it and for the automatic
+    // reconnections they perform on their own.
+    url.searchParams.append('last_event_id', lastEventId)
+    // The request header keeps its name in 1.0; only the hub's response header
+    // was renamed to Mercure-Last-Event-ID.
     headers['Last-Event-Id'] = lastEventId
   }
 
