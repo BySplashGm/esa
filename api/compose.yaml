@@ -10,12 +10,18 @@ services:
       SERVER_NAME: ${SERVER_NAME:-localhost}, php:80
       MERCURE_PUBLISHER_JWT_KEY: ${CADDY_MERCURE_JWT_SECRET:-!ChangeThisMercureHubJWTSecretKey!}
       MERCURE_SUBSCRIBER_JWT_KEY: ${CADDY_MERCURE_JWT_SECRET:-!ChangeThisMercureHubJWTSecretKey!}
+      MERCURE_PUBLISHER_JWT_ALG: ${CADDY_MERCURE_JWT_ALG:-HS256}
+      MERCURE_SUBSCRIBER_JWT_ALG: ${CADDY_MERCURE_JWT_ALG:-HS256}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
       TRUSTED_HOSTS: ${TRUSTED_HOSTS:-^${SERVER_NAME:-example\.com|localhost}|php$$}
       DATABASE_URL: sqlite:///%kernel.project_dir%/var/data.db
       MERCURE_URL: ${CADDY_MERCURE_URL:-http://php/.well-known/mercure}
       MERCURE_PUBLIC_URL: ${CADDY_MERCURE_PUBLIC_URL:-https://${SERVER_NAME:-localhost}/.well-known/mercure}
       MERCURE_JWT_SECRET: ${CADDY_MERCURE_JWT_SECRET:-!ChangeThisMercureHubJWTSecretKey!}
+      # The hub matches an access token on its "iss", and pins the "aud" it
+      # accepts. Both sides read these, so the token and the hub cannot drift.
+      MERCURE_JWT_ISSUER: ${CADDY_MERCURE_JWT_ISSUER:-https://${SERVER_NAME:-localhost}}
+      MERCURE_RESOURCE_IDENTIFIER: ${CADDY_MERCURE_PUBLIC_URL:-https://${SERVER_NAME:-localhost}/.well-known/mercure}
       APP_SECRET: ${APP_SECRET}
     volumes:
       - caddy_data:/data
